@@ -78,7 +78,11 @@ jobs:
           dotenvrtdb -e .env --eUrl="$DOTENVRTDB_URL" --pull
           dotenvrtdb -e .env --writefilebase64=./cloudflared-credentials.json --var=CLOUDFLARED_CREDENTIALS_JSON_BASE64
           dotenvrtdb -e .env --writefilebase64=./cloudflared-config.yml --var=CLOUDFLARED_CONFIG_YML_BASE64
-          dotenvrtdb -e .env --writefilebase64=./docker-compose.yml --var=DOCKER_COMPOSE_YML_BASE64
+          if [ "${USE_DOTENV_DOCKER_COMPOSE:-false}" = "true" ]; then
+            dotenvrtdb -e .env --writefilebase64=./docker-compose.yml --var=DOCKER_COMPOSE_YML_BASE64
+          else
+            echo "Using repository docker-compose.yml"
+          fi
           # dotenvrtdb -e .env --writefileraw=./custom.json --var=CUSTOM_JSON
 
       - name: runner-add-ssh

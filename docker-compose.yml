@@ -67,9 +67,11 @@ services:
       - MAIN_PORT=3000
       - CHECK_INTERVAL_MS=200
       - MAX_WAIT_MS=90000
-      - AUTO_STOP_WHEN_MAIN_UP=true
-      - MAIN_STABLE_MS=5000
-      - IDLE_BEFORE_STOP_MS=1500
+      # Keep HOLD always available by default to avoid failover gaps.
+      # Turn this on only if you intentionally want HOLD to self-stop.
+      - AUTO_STOP_WHEN_MAIN_UP=${HOLD_AUTO_STOP_WHEN_MAIN_UP:-false}
+      - MAIN_STABLE_MS=${HOLD_MAIN_STABLE_MS:-5000}
+      - IDLE_BEFORE_STOP_MS=${HOLD_IDLE_BEFORE_STOP_MS:-1500}
     networks:
       - app-network
     restart: "no"

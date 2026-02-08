@@ -14,6 +14,7 @@ const MAIN_STABLE_MS = Number(process.env.MAIN_STABLE_MS || 5000);
 const IDLE_BEFORE_STOP_MS = Number(process.env.IDLE_BEFORE_STOP_MS || 1500);
 
 let inflight = 0;
+let sawFailoverTraffic = false;
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -79,15 +80,19 @@ async function watchdogAutoStop() {
   if (!AUTO_STOP) return;
 
   while (true) {
+    if (!sawFailoverTraffic) {
+      await sleep(CHECK_INTERVAL_MS);
+      continue;
+    }
+
     // Wait for MAIN stable continuously for MAIN_STABLE_MS
-    const stableStart = Date.now();
+    let stableStart = Date.now();
     while (Date.now() - stableStart < MAIN_STABLE_MS) {
       // eslint-disable-next-line no-await-in-loop
       const ok = await canConnect(MAIN_HOST, MAIN_PORT);
       if (!ok) {
-        await sleep(CHECK_INTERVAL_MS);
-        // reset window
-        continue;
+        // MAIN flapped/down: restart stable window
+        stableStart = Date.now();
       }
       await sleep(CHECK_INTERVAL_MS);
     }
@@ -107,6 +112,7 @@ async function watchdogAutoStop() {
 
 const server = http.createServer(async (req, res) => {
   inflight++;
+  sawFailoverTraffic = true;
 
   let done = false;
   const finish = () => {

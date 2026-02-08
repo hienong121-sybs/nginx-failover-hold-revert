@@ -4,7 +4,8 @@
 - Nginx proxies to `demo-app:3000` (primary).
 - If `3000` is not accepting connections, Nginx fails over to `hold-server:4000` (backup).
 - `hold-server` will **hold** the request until `3000` becomes available, then **replay/proxy** the same request to `3000` and return the response to the client.
-- When `3000` is stable for a while, `hold-server` auto-exits to save resources.
+- By default, `hold-server` stays up continuously so failover is always available.
+  - Optional: set `HOLD_AUTO_STOP_WHEN_MAIN_UP=true` if you intentionally want auto-stop behavior.
 
 ## Local quick test
 ```bash
