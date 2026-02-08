@@ -1,6 +1,40 @@
 version: "3.8"
 
+# ==============================================================================
+# TAILSCALE-CLOUDFLARED CONFIGURATION (LINUX)
+# ==============================================================================
+
 services:
+  tailscale:
+    image: tailscale/tailscale:latest
+    hostname: github-runner
+    network_mode: "host"
+    environment:
+      - TS_AUTHKEY=${TAILSCALE_CLIENT_SECRET}
+      - TS_USERSPACE=false
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_EXTRA_ARGS=--advertise-tags=${TAILSCALE_TAGS:-tag:ci} --accept-dns=true --accept-routes
+    volumes:
+      - tailscale-data:/var/lib/tailscale
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    network_mode: "host"
+    command: tunnel --config /etc/cloudflared/config.yml run
+    volumes:
+      - ./cloudflared-config.yml:/etc/cloudflared/config.yml:ro
+      - ./cloudflared-credentials.json:/etc/cloudflared/credentials.json:ro
+
+  # ==============================================================================
+  # APPLICATION SERVICES
+  # ==============================================================================
+
   nginx:
     image: nginx:1.25-alpine
     container_name: edge-nginx
@@ -11,6 +45,8 @@ services:
     depends_on:
       - app
       - hold
+    networks:
+      - app-network
     restart: unless-stopped
 
   app:
@@ -18,6 +54,8 @@ services:
     container_name: demo-app
     environment:
       - PORT=3000
+    networks:
+      - app-network
     restart: unless-stopped
 
   hold:
@@ -32,4 +70,23 @@ services:
       - AUTO_STOP_WHEN_MAIN_UP=true
       - MAIN_STABLE_MS=5000
       - IDLE_BEFORE_STOP_MS=1500
+    networks:
+      - app-network
     restart: "no"
+
+# ==============================================================================
+# NETWORKS
+# ==============================================================================
+
+networks:
+  app-network:
+    driver: bridge
+    name: app-network
+
+# ==============================================================================
+# VOLUMES
+# ==============================================================================
+
+volumes:
+  tailscale-data:
+    driver: local
