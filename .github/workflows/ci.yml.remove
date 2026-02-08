@@ -1,0 +1,57 @@
+name: docker-failover-test
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build and start stack
+        run: |
+          docker compose up -d --build
+          docker ps -a
+
+      - name: Verify MAIN works
+        run: |
+          set -e
+          OUT=$(curl -s --max-time 10 http://localhost:8080/hello)
+          echo "$OUT"
+          echo "$OUT" | grep -q "MAIN(3000)"
+
+      - name: Stop MAIN (simulate runner/app down)
+        run: |
+          docker stop demo-app
+          docker ps -a
+
+      - name: Send request while MAIN is down (should wait via HOLD) and then recover
+        run: |
+          set -e
+          # Start a request that should block until MAIN comes back.
+          # We cap at 35s for CI. HOLD will forward once MAIN is back.
+          (curl -s --max-time 35 http://localhost:8080/recover > /tmp/out.txt) &
+          CURL_PID=$!
+
+          # Give it a moment to enter HOLD path
+          sleep 3
+
+          # Start MAIN again
+          docker start demo-app
+
+          # Wait for curl to finish
+          wait $CURL_PID
+
+          cat /tmp/out.txt
+          grep -q "MAIN(3000)" /tmp/out.txt
+
+      - name: Show logs (for debugging)
+        if: always()
+        run: |
+          docker logs edge-nginx || true
+          docker logs demo-app || true
+          docker logs hold-server || true
+          docker ps -a

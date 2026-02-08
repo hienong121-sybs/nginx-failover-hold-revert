@@ -1,0 +1,142 @@
+name: deploy-template
+on:
+  push:
+    branches:
+      - main
+    # tags:
+    #   - "v*"
+    # paths:
+    #   - "src/**"
+    #   - "docker-compose.yml"
+    # paths-ignore:
+    #   - "docs/**"
+    #   - "**/*.md"
+  pull_request:
+    branches:
+      - main
+    # types: [opened, synchronize, reopened, ready_for_review]
+    # paths:
+    #   - "src/**"
+    # paths-ignore:
+    #   - "docs/**"
+  workflow_dispatch:
+    # inputs:
+    #   environment:
+    #     description: "Target environment"
+    #     required: true
+    #     default: "dev"
+  # schedule:
+  #   - cron: "0 2 * * *" # Daily at 02:00 UTC
+  # workflow_call:
+  #   inputs:
+  #     environment:
+  #       required: true
+  #       type: string
+
+permissions:
+  id-token: write # Required for OIDC to cloud providers
+  contents: write
+  packages: write
+  actions: write
+
+jobs:
+  deploy-template:
+    runs-on: ubuntu-latest #windows-latest, macos-latest, self-hosted, linux, x64
+    timeout-minutes: 60 # Increase for long deployments
+    env:
+      DOTENVRTDB_URL: ${{ secrets.DOTENVRTDB_URL }}
+    steps:
+      - name: clone-code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          # path: app
+          # submodules: recursive
+
+      - name: setup-nodejs
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20" # Options: 18, 20, 22
+          # cache: "npm" # Options: npm, yarn, pnpm
+          # cache-dependency-path: "**/package-lock.json"
+
+      - name: npm-installed
+        run: |
+          npm i
+          npm i -g @tltdh61/dotenvrtdb
+          npm i -g @hugginroonin/runner-add-ssh
+          # npm ci
+          # npm run build
+
+      - name: create-env-file
+        run: |
+          : > .env
+          dotenvrtdb -e .env --eUrl="$DOTENVRTDB_URL" --pull
+          dotenvrtdb -e .env --writefilebase64=./cloudflared-credentials.json --var=CLOUDFLARED_CREDENTIALS_JSON_BASE64
+          dotenvrtdb -e .env --writefilebase64=./cloudflared-config.yml --var=CLOUDFLARED_CONFIG_YML_BASE64
+          dotenvrtdb -e .env --writefilebase64=./docker-compose.yml --var=DOCKER_COMPOSE_YML_BASE64
+          # dotenvrtdb -e .env --writefileraw=./custom.json --var=CUSTOM_JSON
+
+      - name: runner-add-ssh
+        run: |
+          dotenvrtdb -e .env -- runner-add-ssh
+
+      - name: Build and start stack
+        run: |
+          docker compose up -d --build
+          docker ps -a
+
+      - name: Verify MAIN works
+        run: |
+          set -e
+          OUT=$(curl -s --max-time 10 http://localhost:8080/hello)
+          echo "$OUT"
+          echo "$OUT" | grep -q "MAIN(3000)"
+
+      - name: Stop MAIN (simulate runner/app down)
+        run: |
+          docker stop demo-app
+          docker ps -a
+
+      - name: Send request while MAIN is down (should wait via HOLD) and then recover
+        run: |
+          set -e
+          # Start a request that should block until MAIN comes back.
+          # We cap at 35s for CI. HOLD will forward once MAIN is back.
+          (curl -s --max-time 35 http://localhost:8080/recover > /tmp/out.txt) &
+          CURL_PID=$!
+
+          # Give it a moment to enter HOLD path
+          sleep 3
+
+          # Start MAIN again
+          docker start demo-app
+
+          # Wait for curl to finish
+          wait $CURL_PID
+
+          cat /tmp/out.txt
+          grep -q "MAIN(3000)" /tmp/out.txt
+
+      - name: Show logs (for debugging)
+        if: always()
+        run: |
+          docker logs edge-nginx || true
+          docker logs demo-app || true
+          docker logs hold-server || true
+          docker ps -a
+
+      # - name: docker-started
+      #   run: |
+      #     docker compose --env-file .env up -d
+      #     # docker compose --env-file .env -f docker-compose.prod.yml up -d
+
+      # - name: runner-keep-alive
+      #   run: |
+      #     npx --yes @ongtrieuhau861457/runner-keep-alive --interval 60 --services docker
+
+      # - name: docker-cleanup
+      #   if: always()
+      #   run: |
+      #     docker compose --env-file .env down -v
+      #     # docker compose --env-file .env down
